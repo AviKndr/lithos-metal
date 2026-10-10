@@ -1,12 +1,13 @@
 # CI
 
-Two lanes. Hosted runners check every push and pull request; bare-metal Macs run what needs a real Apple GPU, on
-request for pull requests because a self-hosted machine executes the code under test.
+Three lanes. Hosted runners check every push and pull request; bare-metal Macs run what needs a real Apple GPU,
+on request for pull requests because a self-hosted machine executes the code under test.
 
 | Lane | Workflow | Runs on | When | Required check |
 |---|---|---|---|---|
 | 1. Hosted | `ci.yml` | GitHub-hosted Linux and macOS | every push and pull request | `ci-finish` |
 | 2. GPU tiers | `mac-gpu.yml` | self-hosted Macs | `/mac-test` on a pull request; every push to `main` | `mac-gpu (<runner>)` |
+| 3. Release gate | `release-gate.yml` | self-hosted Macs | `/release-gate`, or dispatched on a release commit | `release-gate (<runner>)` |
 
 ## Lane 1: hosted
 
@@ -45,14 +46,34 @@ Mac. A new `/mac-test` on the same pull request cancels the older run. A dispatc
 `mac-gpu partial (<runner>)`, a status no ruleset requires. No workflow may name a Hugging Face token
 (`tools/ci/hygiene.py`): CI reads public checkpoints only.
 
+## Lane 3: the release gate
+
+`release-gate.yml` first builds the bundle a tag of this commit would publish (`tools/release/build_macos.py` on hosted
+macOS; `release.yml` publishes these bytes); on each runner `tools/ci/release_gate.py` installs that bundle and the
+previous release's published bundle (the newest `v*` tag behind the commit with a published release, checked against its
+formula) the way the Homebrew formula does, each in its own environment, then for every case in
+`tools/ci/release_cases.json` that fits the machine (the 27B with and without its DSpark drafter, the 8B) serves each
+build in turn, ABBA, through `lithos-metal serve` and sends the prompt set greedily, streaming. It fails when an output
+differs from the release's (`--expect-output-change`, or `/release-gate --expect-output-change`, allows a deliberate
+numerics change) or when decode speed (the tokens streamed after the first text chunk, per second, as both servers count
+them per chunk; against a release that predates per-chunk counts decode is not compared, and the status says so) or the
+long prompt's time to first token regresses by more than the larger of 2 % and twice the runs' own spread; a spread
+above 5 % or a build that is not deterministic is inconclusive. Everything a gate uses lives under
+`$LITHOS_CI_ROOT/gate`, which every gate empties first: the checkpoint downloads, and each build's environment and packs
+(an earlier gate's candidate ran as the runner's user and could have changed them). Within one gate the candidate could
+still alter the baseline's files, so `/release-gate`, like `/mac-test`, is for a maintainer who has read the change.
+Each case's numbers and the servers' logs are in the run's artifact. Dispatch it on a release commit (Actions →
+release-gate → Run workflow), or comment `/release-gate [RUNNER ...]` on a pull request that claims a speed change.
+
 ## A runner Mac
 
 Any bare-metal Apple silicon Mac on macOS 26 with the Command Line Tools: an office machine or an EC2 Mac
 (`mac-m4pro.metal`, `mac-m4max.metal`, `mac-m3ultra.metal`, … on a dedicated host, allocated for at least 24
-hours; grow the APFS container to the EBS volume after the first boot). The GPU tiers fit a 24 GB machine.
+hours; grow the APFS container to the EBS volume after the first boot). The GPU tiers fit a 24 GB machine; the 27B
+release cases need about 32 GB of GPU working set, so a 48 GB machine or larger.
 
-1. `brew install python@3.12`; keep the machine awake (`sudo pmset -a sleep 0 disablesleep 1`); 60 GB free for
-   the checkpoints and environments.
+1. `brew install python@3.12`; keep the machine awake (`sudo pmset -a sleep 0 disablesleep 1`); 200 GB free for
+   the checkpoints, packs, environments and Hub cache.
 2. Settings → Actions → Runners → New self-hosted runner (macOS, ARM64), then in the runner directory
    `./config.sh --url https://github.com/lithos-ai/lithos-metal --token <token> --labels <backend> --unattended`
    and `./svc.sh install && ./svc.sh start`. The label is the chip's backend name under

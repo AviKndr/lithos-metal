@@ -1,8 +1,8 @@
 name: mac-slash
 
-# `/mac-test` on a pull request (tools/ci/mac_slash.py). An issue_comment run always uses the default branch's copy
-# of this file and checks out the default branch, never the pull request: this job can dispatch workflows and write
-# statuses, so no pull request may change what it runs.
+# `/mac-test` and `/release-gate` on a pull request (tools/ci/mac_slash.py). An issue_comment run always uses the
+# default branch's copy of this file and checks out the default branch, never the pull request: this job can
+# dispatch workflows and write statuses, so no pull request may change what it runs.
 
 on:
   issue_comment:
@@ -17,8 +17,10 @@ permissions:
 
 jobs:
   dispatch:
-    # Any comment that mentions the command starts this job; mac_slash.parse() decides whether it is one.
-    if: github.event.issue.pull_request && contains(github.event.comment.body, '/mac-test')
+    # Any comment that mentions a command starts this job; mac_slash.parse() decides whether it is one.
+    if: >-
+      github.event.issue.pull_request &&
+      (contains(github.event.comment.body, '/mac-test') || contains(github.event.comment.body, '/release-gate'))
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

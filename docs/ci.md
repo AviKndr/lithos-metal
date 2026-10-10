@@ -7,7 +7,7 @@ on request for pull requests because a self-hosted machine executes the code und
 |---|---|---|---|---|
 | 1. Hosted | `ci.yml` | GitHub-hosted Linux and macOS | every push and pull request | `ci-finish` |
 | 2. GPU tiers | `mac-gpu.yml` | self-hosted Macs | `/mac-test` on a pull request; every push to `main` | `mac-gpu (<runner>)` |
-| 3. Release gate | `release-gate.yml` | self-hosted Macs | `/release-gate`, or dispatched on a release commit | `release-gate (<runner>)` |
+| 3. Release gate | `release-gate.yml`, `release.yml` | self-hosted Macs, then hosted | `/release-gate`, or dispatched on a release commit; a `v*` tag | `release-gate (<runner>)` |
 
 ## Lane 1: hosted
 
@@ -65,6 +65,18 @@ still alter the baseline's files, so `/release-gate`, like `/mac-test`, is for a
 Each case's numbers and the servers' logs are in the run's artifact. Dispatch it on a release commit (Actions →
 release-gate → Run workflow), or comment `/release-gate [RUNNER ...]` on a pull request that claims a speed change.
 
+### Releasing
+
+Bump `pyproject.toml`, dispatch `release-gate` on the release commit (one run for all runners: they gate the bundle it
+builds), and tag `vX.Y.Z` within the artifact retention (90 days) once its statuses pass. Each status description names
+the baseline and the bundle (`vs vX.Y.Z bundle <digest>:`). `release.yml` runs one release at a time; it refuses a tag
+whose commit has no passing `release-gate (<runner>)` status, or one that compared with another release than the newest
+behind the commit, takes the gate's bundle from that run (it builds nothing for a tag) and checks its digest and that
+every case of `release_cases.json` passed on at least one of that run's runners (the 27B cases need a runner with the
+memory for them), smoke-tests it on hosted macOS, waits for a reviewer of the `release` environment, checks the baseline
+and the bundle again, publishes the GitHub release, and opens the pull request that updates `lithos-ai/homebrew-tap`
+(whose CI installs and tests the formula). Manual runs of `release.yml` build a bundle for review and publish nothing.
+
 ## A runner Mac
 
 Any bare-metal Apple silicon Mac on macOS 26 with the Command Line Tools: an office machine or an EC2 Mac
@@ -98,4 +110,5 @@ release cases need about 32 GB of GPU working set, so a 48 GB machine or larger.
   runners are stable.
 * Actions → General → "Require approval for all external contributors": a fork's workflows run only after a
   maintainer approves them.
-* Variable `MAC_CI_RUNNERS`.
+* Variable `MAC_CI_RUNNERS`; environment `release` with required reviewers; secret `HOMEBREW_TAP_TOKEN` (a
+  fine-grained token with contents and pull requests write on `lithos-ai/homebrew-tap` only).

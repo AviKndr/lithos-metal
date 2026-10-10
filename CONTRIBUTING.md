@@ -26,10 +26,11 @@ python3.12 tools/release/build_macos.py
 
 This creates an archive in `dist/` containing the compiled wheel and serving dependency wheels,
 plus a Homebrew formula with the archive's SHA-256. The
-[macOS release workflow](.github/workflows/release.yml) builds and smoke-tests the bundle.
-Manual runs produce reviewable artifacts; a `vVERSION` tag matching `pyproject.toml` publishes release assets.
-After publishing the release, copy the generated formula into `Formula/lithos-metal.rb` in the
-[Lithos tap](https://github.com/lithos-ai/homebrew-tap) and validate it with `brew install` and `brew test`.
+[macOS release workflow](.github/workflows/release.yml) smoke-tests the bundle. Manual runs build one for review; a
+`vVERSION` tag matching `pyproject.toml` publishes the bundle the [release gate](docs/ci.md#releasing) built and
+measured on the tagged commit, and opens
+the pull request that copies the generated formula into `Formula/lithos-metal.rb` in the
+[Lithos tap](https://github.com/lithos-ai/homebrew-tap), whose CI validates it with `brew install` and `brew test`.
 Regenerate the archive and formula together for each version.
 
 ## Test tiers

@@ -121,3 +121,25 @@ def test_release_gate_counts_the_timed_tokens_when_every_run_reports_them():
     assert verdict["verdict"] == "passed" and "decode_tok_s" not in verdict["metrics"]
     summary = release_gate.overall([{"name": "a", **verdict}])[1]
     assert summary == "1 cases identical; a decode not compared (no per-chunk counts)"
+
+
+def test_release_needs_passing_gates_against_the_previous_release():
+    ok = {"context": "release-gate (m4_pro)", "state": "success",
+          "description": "vs v0.1.2 bundle 0123456789ab: 3 cases identical"}
+    other = {"context": "mac-gpu (m4_pro)", "state": "failure", "description": "kernels: 1 failed"}
+    assert release_gate.release_refusal([ok, other], "v0.1.2") is None
+    assert "did not compare with v0.1.3" in release_gate.release_refusal([ok], "v0.1.3")
+    assert "is pending" in release_gate.release_refusal([ok, {**ok, "context": "release-gate (m5_max_40c)",
+                                                              "state": "pending"}], "v0.1.2")
+    assert release_gate.release_refusal([other], "v0.1.2") == "no release-gate status on this commit"
+    assert release_gate.release_refusal([ok], "v0.1.2", bundle="0123456789ab") is None
+    assert "gated bundle 0123456789ab, not fedcba987654" in release_gate.release_refusal([ok], "v0.1.2", "fedcba987654")
+
+
+def test_release_needs_every_case_passed_on_some_runner():
+    cases = {"cases": [{"name": "27b-dspark"}, {"name": "27b-plain"}, {"name": "8b-plain"}]}
+    small = {"cases": [{"name": "27b-dspark", "verdict": "skipped"}, {"name": "27b-plain", "verdict": "skipped"},
+                       {"name": "8b-plain", "verdict": "passed"}]}
+    large = {"cases": [{"name": n, "verdict": "passed"} for n in ("27b-dspark", "27b-plain", "8b-plain")]}
+    assert release_gate.uncovered([small], cases) == "no runner passed the case 27b-dspark"
+    assert release_gate.uncovered([small, large], cases) is None

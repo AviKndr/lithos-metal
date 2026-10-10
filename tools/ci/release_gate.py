@@ -367,6 +367,34 @@ def overall(cases: List[dict]) -> tuple:
     return "passed", f"{len(ran)} cases identical; {speed}"
 
 
+def release_refusal(statuses: List[dict], previous: str, bundle: Optional[str] = None) -> Optional[str]:
+    """Why a tag may not publish this commit (release.yml), or None: it needs a ``release-gate (<runner>)`` status,
+    and every one a success against ``previous``, the newest release behind it, and (given ``bundle``, the digest of
+    the bundle about to be published) of that bundle. The description names both: ``vs <tag> bundle <digest>:``."""
+    gates = [s for s in statuses if s["context"].startswith("release-gate (")]
+    if not gates:
+        return "no release-gate status on this commit"
+    for s in gates:
+        if s["state"] != "success":
+            return f"{s['context']} is {s['state']}"
+        ran = re.match(r"vs (\S+) bundle ([0-9a-f]{12}):", s.get("description") or "")
+        if not ran or ran[1] != previous:
+            return f"{s['context']} did not compare with {previous}"
+        if bundle is not None and ran[2] != bundle:
+            return f"{s['context']} gated bundle {ran[2]}, not {bundle}"
+    return None
+
+
+def uncovered(results: List[dict], cases: dict) -> Optional[str]:
+    """Why the runners' results do not cover the release (release.yml), or None: every case of ``cases``
+    (release_cases.json) passed on at least one runner. A runner skips a case its memory cannot hold, so the 27B cases
+    need a runner large enough for them."""
+    for name in [c["name"] for c in cases["cases"]]:
+        if not any(c.get("name") == name and c.get("verdict") == "passed" for r in results for c in r.get("cases", [])):
+            return f"no runner passed the case {name}"
+    return None
+
+
 def summary_markdown(result: dict) -> str:
     lines = [f"### release-gate on {result.get('chip', '?')}: {result['status']}",
              f"candidate {str(result.get('commit'))[:10]} vs baseline {result.get('baseline')}", "",
@@ -454,7 +482,9 @@ def main(argv: List[str] | None = None) -> int:
         if measured.get("error"):
             raise CouldNotRun(measured["error"])
         result["cases"] = measured["cases"]
-        result["status"], result["summary"] = overall(result["cases"])
+        result["status"], summary = overall(result["cases"])
+        # The status names the baseline and the bundle; release.yml checks both before it publishes that bundle.
+        result["summary"] = f"vs {result['baseline']} bundle {result['bundle']}: {summary}"
     except CouldNotRun as e:
         result["error"] = str(e)
         result["summary"] = f"could not run: {e}"

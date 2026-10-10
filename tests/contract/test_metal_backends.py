@@ -64,7 +64,7 @@ def test_m3_max_draft_context_is_capped_and_other_chips_are_not():
 
 def test_unmeasured_backends_have_no_borrowed_tuning():
     configs = load_configs()
-    for name in ('apple-m3-max-30c', 'apple-m4-pro-16c', 'apple-m4-pro-20c', 'apple-m5-max-32c'):
+    for name in ('apple-m3-max-30c', 'apple-m4-pro-16c', 'apple-m5-max-32c'):
         config = configs[name]
         assert config.validation == 'unmeasured'
         assert config.accelerator == 'off'

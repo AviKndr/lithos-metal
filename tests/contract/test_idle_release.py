@@ -10,7 +10,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from monolith.serving.lifecycle import IdleRelease, ModelLoadError, ModelState
+from monolith.serving.lifecycle import FifoLock, IdleRelease, ModelLoadError, ModelState
 
 
 class Clock:
@@ -580,4 +580,25 @@ def test_an_explicit_release_unloads_what_a_request_loaded_before_the_lifecycle_
     assert life.release_now() and unloads == [1] and life.state is ModelState.UNLOADED
     loaded[0] = False
     assert not life.release_now() and unloads == [1]
+
+
+def test_fifo_lock_admits_waiters_in_order():
+    lock, order, threads = FifoLock(), [], []
+    assert lock.acquire()
+    for i in range(5):
+        def wait(i=i):
+            lock.acquire()
+            order.append(i)
+            lock.release()
+        threads.append(threading.Thread(target=wait))
+        threads[-1].start()
+        deadline = time.monotonic() + 5
+        while lock._next != i + 2:                     # this waiter holds its ticket before the next one asks
+            assert time.monotonic() < deadline
+            time.sleep(.001)
+    assert not lock.acquire(blocking=False)            # others are waiting: no barging ahead of them
+    lock.release()
+    for thread in threads:
+        thread.join(5)
+    assert order == [0, 1, 2, 3, 4] and lock.acquire(blocking=False)
 

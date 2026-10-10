@@ -23,6 +23,29 @@ class ModelLoadError(RuntimeError):
     """Loading the model failed. The model stays unloaded and a later request tries again."""
 
 
+class FifoLock:
+    """A lock that admits blocking waiters in the order they asked (Ollama answers the requests it queues in order). A
+    non-blocking acquire succeeds only when nobody holds the lock or waits for it."""
+
+    def __init__(self):
+        self._condition = threading.Condition()
+        self._next = self._serving = 0        # tickets handed out; the ticket that holds the lock
+
+    def acquire(self, blocking=True):
+        with self._condition:
+            if not blocking and self._next != self._serving:
+                return False
+            ticket, self._next = self._next, self._next + 1
+            while ticket != self._serving:
+                self._condition.wait()
+            return True
+
+    def release(self):
+        with self._condition:
+            self._serving += 1
+            self._condition.notify_all()
+
+
 class IdleRelease:
     """The model's lifecycle: ``unloaded -> loading -> ready -> unloading -> unloaded``, ``loading -> failed``.
 

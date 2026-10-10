@@ -308,8 +308,10 @@ class Backend:
         try:
             started = time.perf_counter()
             stopped = False
+            stops = [request.stop] if isinstance(request.stop, str) else request.stop or []
+            before_stop = 0            # tokens published before a stop string appeared
             def publish(tokens):
-                nonlocal first_text_ms, stopped
+                nonlocal first_text_ms, stopped, before_stop
                 if on_text or on_content or on_progress:
                     content, _ = self.visible_text(tokens, request)
                     text = streaming_text(content, request)
@@ -321,11 +323,13 @@ class Backend:
                         on_content(content)
                     if on_progress:
                         on_progress(content, min(len(tokens), limit))
-                    stops = [request.stop] if isinstance(request.stop, str) else request.stop or []
-                    if stops:
-                        raw = self.tokenizer.decode(tokens, skip_special_tokens=True, clean_up_tokenization_spaces=False)
-                        stopped = any(stop in raw for stop in stops)
-            options = dict(on_tokens=publish, cancelled=lambda: stopped or bool(cancelled and cancelled())) if on_text or on_content or on_progress else {}
+                if stops and not stopped:
+                    raw = self.tokenizer.decode(tokens, skip_special_tokens=True, clean_up_tokenization_spaces=False)
+                    stopped = any(stop in raw for stop in stops)
+                    before_stop = before_stop if stopped else len(tokens)
+            # A stop string ends decoding on every path, not only while streaming.
+            options = (dict(on_tokens=publish, cancelled=lambda: stopped or bool(cancelled and cancelled()))
+                       if on_text or on_content or on_progress or stops else {})
             if getattr(self.session, 'prefix_cache', None) is not None:
                 stable = set()
                 if messages:
@@ -356,6 +360,13 @@ class Backend:
                 options['cache_prefix_tokens'] = sorted(stable) if len(stable) > 1 else next(iter(stable), 0)
             generation = self.session.generate(ids, limit, **options)
             tokens = generation.tokens
+            # The publish that showed a stop string can carry tokens past it (one per pump or speculative round): the
+            # response and its usage end at the first token that completes the stop string.
+            for n in range(before_stop + 1, len(tokens) + 1) if stopped else ():
+                raw = self.tokenizer.decode(tokens[:n], skip_special_tokens=True, clean_up_tokenization_spaces=False)
+                if any(stop in raw for stop in stops):
+                    tokens = tokens[:n]
+                    break
             prefix = getattr(getattr(self.session, 'prefix_cache', None), 'last', None) or {}
             self.last_metrics = dict(steps=getattr(generation, 'steps', 0),
                 decode_gpu_ms=getattr(generation, 'decode_ms', 0.0), wall_ms=(time.perf_counter()-started)*1000,

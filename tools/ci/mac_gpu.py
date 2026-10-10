@@ -46,10 +46,12 @@ EXTRA_PACKAGES = ("mlx-lm", "httpx>=0.28")
 MIN_FREE_GB = 30
 # Skip reasons that do not mean "nothing was tested". Each entry is a regular expression searched in the reason.
 ALLOWED_SKIPS = (
-    r"coherent task fusion requires Apple10",                          # the chip's GPU family
+    r"requires? Apple10",                                              # a feature of the chip's GPU family
     r"the scale cache needs whole lane groups",                        # a parametrized case the test rules out
     r"Resident verification prefill requires a speculative decoder recipe",
     r"Shared dense slab range; cooperative layout has separate packing tests",
+    r"a tile shape the Apple9 cooperative layout does not take",       # the chip's tensor-ops register layout
+    r"the tile operand recipe repacks for the Apple10 cooperative layout",
 )
 # Reference implementations an oracle tier imports, pinned: (name, environment variable, repository, commit).
 REFERENCES = (("deepspec", "MONOLITH_DEEPSPEC", "https://github.com/deepseek-ai/DeepSpec",

@@ -14,3 +14,4 @@ These documents describe the current architecture, implementation contracts, and
 
 For installation and examples, see the [project README](../README.md).
 For development setup and test tiers, see [CONTRIBUTING.md](../CONTRIBUTING.md).
+For the CI lanes and runner Macs, see [CI](ci.md).

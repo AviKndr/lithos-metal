@@ -203,6 +203,42 @@ def test_warmup_runs_the_prompt_graph_once():
     assert backend.last_metrics == {}
 
 
+def test_warmup_compiles_every_recipes_greedy_and_sampling_programs():
+    seen, selected = [], []
+    backend = _warmup_backend(8192, seen)
+    backend.assets = SimpleNamespace(recipes={'128': {}, '4096': {}, '32768': {}}, recipe_key=None)
+    backend.select_session = lambda request, context: selected.append((context, request.temperature > 0))
+    backend.warmup('test-model')
+    # the recipes within the context, each compiled greedy and sampling; the cache keeps all four
+    assert selected == [(128, False), (128, True), (4096, False), (4096, True)]
+    assert backend.max_sessions >= len(selected) - 1
+
+
+def test_the_session_cache_keeps_its_bound(monkeypatch):
+    from monolith import generate
+
+    class Fake:
+        dev, _pipelines = 'device', {}
+
+        def adopt_buffers(self, other):
+            pass
+
+        def release_engines(self):
+            pass
+    monkeypatch.setattr(generate, 'load_session', lambda *args, **kwargs: Fake())
+    backend = Backend.__new__(Backend)
+    backend.model_dir, backend.pack_dir, backend.prefill_chunk_size, backend.prefill_exact = 'm', 'p', 128, False
+    backend.session, backend.sampling, backend.max_sessions = None, None, 3
+    backend.assets = SimpleNamespace(options=lambda tokens: (str(tokens), {}))
+    request = lambda temperature: SimpleNamespace(temperature=temperature, top_p=1.0, top_k=0, seed=0)
+    for context in (128, 4096):
+        for temperature in (0.0, 0.7):
+            backend.select_session(request(temperature), context)
+    assert set(backend._sessions) == {(False, '128'), (True, '128'), (False, '4096')}      # all but the selected one
+    backend.select_session(request(0.0), 8192)                                               # one more: the oldest goes
+    assert set(backend._sessions) == {(True, '128'), (False, '4096'), (True, '4096')}
+
+
 def test_warmup_cuts_the_long_prompt_to_the_context():
     # exact chunks: the decoder ingests up to 128 prompt tokens itself
     for max_context, words in ((600, 589), (130, 119), (129, None), (12, None)):

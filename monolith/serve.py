@@ -34,6 +34,7 @@ class Backend:
     prefill_exact = False
     lifecycle = None                 # IdleRelease: unload after an idle period (--model-ttl)
     last_active = 0.0                # monotonic time a generation last finished (keep_warm's window)
+    max_sessions = 8                 # compiled variants kept besides the selected one (warm-up keeps all of its own)
 
     def __init__(self, model_dir, pack_dir, max_context=4096, prefill_chunk_size=128, *, assets=None, prefill_exact=False,
                  prefix_store=None):
@@ -51,7 +52,8 @@ class Backend:
         self.prefix_store = prefix_store     # PrefixStore options (root, max_bytes): checkpoints on local disk
 
     def warmup(self, model_name):
-        """Compile and page in the default generation path before accepting traffic."""
+        """Compile every recipe's greedy and sampling programs and page in the default generation path before
+        accepting traffic, so no request compiles."""
         logging.getLogger(__name__).info('Warming generation kernels and model weights…')
         request = ChatRequest(model=model_name, messages=[Message(role='user', content='Hello')], max_tokens=2)
         assets = getattr(self, 'assets', None)
@@ -60,10 +62,16 @@ class Backend:
             contexts = [int(assets.recipe_key)]
         else:
             contexts = [k for k in contexts if k <= self.max_context] or contexts[:1]
+        # Greedy and sampling programs differ (one sampling program serves every temperature, top-k, top-p and seed):
+        # compile both for every recipe, and keep all of them.
+        sampled = ChatRequest(model=model_name, messages=request.messages, max_tokens=2, temperature=1.0)
+        self.max_sessions = max(self.max_sessions, 2 * len(contexts) - 1)
         for context in contexts:
-            logging.getLogger(__name__).info('Compiling serving context recipe %s', context)
-            self.select_session(request, context)
-            self.session.prepare()
+            for variant in (request, sampled):
+                logging.getLogger(__name__).info('Compiling serving context recipe %s (%s)', context,
+                                                 'sampling' if variant.temperature > 0 else 'greedy')
+                self.select_session(variant, context)
+                self.session.prepare()
         # Exercise both initial allocation and reuse/reset, including the
         # incremental text path that the first real streaming request uses.
         for _ in range(2):
@@ -133,7 +141,7 @@ class Backend:
             self._open_prefix_store()
         if request.temperature > 0 and hasattr(self.session, 'set_sampling'):
             self.session.set_sampling(*settings)
-        while len(sessions) > 8:
+        while len(sessions) > self.max_sessions:
             sessions.pop(next(iter(sessions)))
         self.sampling = sampling
 

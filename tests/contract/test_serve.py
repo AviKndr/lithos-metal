@@ -111,6 +111,7 @@ def test_template_sampling_context_and_stop(monkeypatch, eos):
     client.post("/v1/chat/completions", json=payload(max_completion_tokens=2))
     assert len(calls) == 1
     assert calls[0]["prefill_chunk_size"] == 256
+    assert calls[0]["autotune"] is False and calls[0]["measured_choices"] is True
     response = client.post("/v1/chat/completions", json=payload(max_tokens=2, temperature=0.7, top_p=0.9, seed=42))
     assert response.json()["choices"][0]["finish_reason"] == "length"
     assert calls[-1]["temperature"] == 0.7 and calls[-1]["top_p"] == 0.9 and calls[-1]["seed"] == 42

@@ -87,7 +87,7 @@ class Session:
                  prefill_attention: Optional[str] = None, decoder_kernel_config: Optional[Dict[str, Any]] = None,
                  prefix_cache: bool = False, prefix_cache_min_tokens: int = 0, device=None, pipeline_cache=None,
                  prefill_optimizations: bool = True, prefix_cache_max_bytes: Optional[int] = None,
-                 prefill_exact: bool = False) -> None:
+                 prefill_exact: bool = False, measured_choices: bool = False) -> None:
         """``drafter`` (a ``Drafter`` built with the model's head) and its pack turn the session speculative: one
         small dynamic-T decode program holds the round; ``verify`` / ``verify_threshold`` as in ``compile_program``.
         ``draft_sampling`` (temperature > 0): ``argmax`` drafts the drafter's argmax and keeps it iff the target's
@@ -180,7 +180,8 @@ class Session:
             device_key = f"{info.name.replace(' ', '-').lower()}-{info.gpu_cores}c"
             chip = f"{device_key}-{get_backend(self.profile.backend).cache_identity(self.profile)}"
             self.tuner = Autotuner(self.dev, info.gpu_cores, str(Path(pack_dir) / f"autotune.{chip}.json"))
-        elif self.profile.raw.get("kernel_choices"):
+        elif measured_choices and self.profile.raw.get("kernel_choices"):
+            # serve's sessions: the configuration's measured choices, timed on the chip once; otherwise the default geometry
             from .backends.metal.config import kernel_choices
             from .compiler.autotune import KernelChoices
 

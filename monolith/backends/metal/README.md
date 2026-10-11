@@ -17,7 +17,8 @@ configuration or autotuning cache.
 
 A configuration can ship measured kernel choices (`kernel_choices`, a file beside it): the autotuner's cache
 entries from that chip for its decode programs, plus the prompt pass's 32-row tile geometry measured in the prompt
-program. A session that does not tune (`serve`) compiles with them; shapes they do not list keep the defaults.
+program. `serve` compiles with them (`Session(measured_choices=True)`); shapes they do not list keep the defaults, and
+`python -m monolith.generate --no-autotune` keeps the default geometry everywhere.
 Regenerate them when kernels change: `python -m monolith.generate` tunes and caches per pack.
 
 Unmeasured configurations have no cost tables or automatic megakernel fusion,

@@ -172,7 +172,8 @@ def test_cli_prefill_chunk_is_a_size_an_exact_size_or_the_chips_exact_size():
     assert parse() == (None, True) == parse('--prefill-chunk-size', 'auto-exact')
     assert parse('--prefill-chunk-size', '128') == (128, False)
     assert parse('--prefill-chunk-size', '512-exact') == (512, True)
-    for value in ('auto', '0', '0-exact', 'exact', '-exact'):
+    assert parse('--prefill-chunk-size', '64-exact') == (64, True)
+    for value in ('auto', '0', '0-exact', 'exact', '-exact', '192-exact'):
         with pytest.raises(SystemExit):
             parse('--prefill-chunk-size', value)
 

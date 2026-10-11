@@ -500,3 +500,36 @@ def device_attention_tiles(program, *, qm=32, kn=128, ks=None, score_bf16=False)
                     field='p.'+macro.removeprefix('STATIC_GQA_P_').lower()
                     k.source=re.sub(r'\b'+re.escape(field)+r'\b',macro,k.source)
     return program
+
+
+def exact_attention(program, rows):
+    """Make a prompt program's attention reproduce passes of ``rows`` rows bit for bit: the run-time chunk rule
+    (``pick_chunk``) depends on the pass's context, so the cores and folds of the chunked attention take each row's
+    chunking from the ``rows``-row pass that row would be in (``EXACT_SUB``). Fixed-chunk kernels (v2, the matrix
+    attention) already sum every row the same way; a workspace shared with any other core is left alone."""
+    cores, merges = {}, {}
+    for op in program.ops:
+        k = program.kernels[op.kernel]
+        if k.function == 'gqa_merge':
+            merges.setdefault(dict((s, n) for s, n, _ in op.bindings).get(0), []).append(op)
+        elif k.function.startswith('gqa_decode'):
+            cores.setdefault(dict((s, n) for s, n, _ in op.bindings).get(7), []).append(op)
+
+    def chunked(op, function):
+        m = program.kernels[op.kernel].macros
+        return (program.kernels[op.kernel].function == function and m.get('STEP_STATE') == '1'
+                and all(m.get(f, '0') == '0' for f in ('DRAFT', 'LM_MODE', 'STEAL', 'FIXED_CHUNK', 'ADAPTIVE_CHUNK')))
+
+    for workspace, ops in cores.items():
+        folds = merges.get(workspace, [])
+        if not all(chunked(op, 'gqa_decode') for op in ops) or not all(chunked(op, 'gqa_merge') for op in folds):
+            continue
+        for op in ops + folds:
+            key = op.kernel+f'.exact{rows}'
+            if key not in program.kernels:
+                kernel = copy.deepcopy(program.kernels[op.kernel])
+                kernel.macros['EXACT_SUB'] = f'{rows}u'
+                program.kernels[key] = kernel
+            op.kernel = key
+    program.kernels = {op.kernel: program.kernels[op.kernel] for op in program.ops}
+    return program

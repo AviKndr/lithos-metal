@@ -121,6 +121,9 @@ class Session:
             raise ValueError("prefill_chunk_size must be a positive integer")
         self.prefill_chunk_size = prefill_chunk_size
         self.prefill_exact = prefill_exact and prefill_chunk_size > self.EXACT_ROWS
+        if self.prefill_exact and prefill_chunk_size % self.EXACT_ROWS:
+            # a large chunk reproduces the 128-row passes it is made of: it must start and end on their boundaries
+            raise ValueError(f"an exact prefill chunk is a multiple of {self.EXACT_ROWS} rows, got {prefill_chunk_size}")
         self._keep = None
         self.commute_norm = commute_norm
         self.gdn_mixer_fusion = gdn_mixer_fusion
@@ -409,6 +412,9 @@ class Session:
             with using_backend(self.profile.backend) as backend:
                 prog = backend.optimize_prefill(prog, exact=exact)
             reuse_arenas(prog, barriers=self.barriers)
+        if exact:
+            from .compiler.prefill import exact_attention
+            prog = exact_attention(prog, self.EXACT_ROWS)
         if shared:
             prog = self._alias_weights(prog)
         if self.tuner is not None:

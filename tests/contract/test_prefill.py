@@ -4,7 +4,7 @@ import struct
 import pytest
 
 from monolith.backends.metal import get_backend
-from monolith.compiler.prefill import specialize_prompt
+from monolith.compiler.prefill import exact_attention, specialize_prompt
 from monolith.runtime.program import BufferSpec, KernelSpec, OpSpec, Program
 
 
@@ -20,6 +20,24 @@ def test_prompt_sampling_guards_do_not_change_draft_or_final_sampling():
     assert len(p.ops) == 3
     assert 'st->prefill_left > 0u' in p.kernels[p.ops[0].kernel].source
     assert p.kernels[p.ops[-1].kernel].source == source
+
+
+
+def test_exact_attention_marks_chunked_cores_and_their_folds():
+    def attention(core_macros, merge_macros=None):
+        return Program({'core': KernelSpec('', 'gqa_decode', dict(core_macros, STEP_STATE='1')),
+                        'merge': KernelSpec('', 'gqa_merge', dict(merge_macros or {}, STEP_STATE='1'))}, {},
+                       [OpSpec('core', [(7, 'part_o', 0), (8, 'part_md', 0)], (60, 1, 1), (384, 1, 1)),
+                        OpSpec('merge', [(0, 'part_o', 0), (1, 'part_md', 0)], (64, 1, 1), (32, 1, 1)),
+                        OpSpec('core', [(7, 'part_o', 0), (8, 'part_md', 0)], (60, 1, 1), (384, 1, 1)),
+                        OpSpec('merge', [(0, 'part_o', 0), (1, 'part_md', 0)], (64, 1, 1), (32, 1, 1))])
+    p = exact_attention(attention({}), 128)
+    assert [p.kernels[op.kernel].macros.get('EXACT_SUB') for op in p.ops] == ['128u'] * 4
+    assert 'EXACT_SUB' not in attention({}).kernels['core'].macros
+    for macros in ({'FIXED_CHUNK': '1'}, {'STEAL': '1'}, {'DRAFT': '1'}, {'LM_MODE': '2'}):
+        before = attention(macros, macros if 'STEAL' not in macros else None)
+        p = exact_attention(copy.deepcopy(before), 128)
+        assert p.to_json() == before.to_json()
 
 
 def test_large_projection_policy_is_chip_and_shape_specific(monkeypatch):

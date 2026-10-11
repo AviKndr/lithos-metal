@@ -409,6 +409,9 @@ class Session:
             with using_backend(self.profile.backend) as backend:
                 prog = backend.optimize_prefill(prog, exact=exact)
             reuse_arenas(prog, barriers=self.barriers)
+        if exact:
+            from .compiler.prefill import exact_attention
+            prog = exact_attention(prog, self.EXACT_ROWS)
         if shared:
             prog = self._alias_weights(prog)
         if self.tuner is not None:

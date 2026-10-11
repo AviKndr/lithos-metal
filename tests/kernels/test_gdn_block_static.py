@@ -137,6 +137,7 @@ def test_mixed_nonpower_projection_splits_preserve_state(tmp_path):
     assert snapshot(engines[0],2560)==snapshot(engines[1],2560)
 
 
+@APPLE10
 @pytest.mark.parametrize('tk',[64,128,256])
 def test_staged_reduction_tiles_preserve_state(block,tk):
     dev,module,p=block

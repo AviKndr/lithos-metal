@@ -67,6 +67,8 @@ def test_m3_ultra_60c_is_its_own_device():
     for name, cores, family in (('Apple M3 Ultra', 80, 9), ('Apple M3 Max', 60, 9), ('Apple M3 Ultra', 30, 9)):
         assert config_for_device(cores, family, name) is None
     assert get_backend('m3_ultra_60c').serving_context_limit(drafter=True) is None
+    assert get_backend('m3_ultra_60c').serving_prefill_chunk({}) == 512
+    assert get_backend('m4_pro').serving_prefill_chunk({}) is None
 
 
 def test_unmeasured_backends_have_no_borrowed_tuning():

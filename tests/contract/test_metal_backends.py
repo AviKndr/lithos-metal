@@ -278,3 +278,5 @@ def test_shipped_kernel_choices_are_valid_geometries(name):
             assert c['grid_mode'] in ('crew', 'crew2') or kernels.gemm_ksplit(c['grid_mode']) > 1, key
         assert 0 < c['ms'] <= c['default_ms'], key
     assert kernel_choices(configs['apple-m5-max-40c']) == {}
+    # the sidecar beside a configuration is not one
+    assert set(load_configs(config_path(name).parent)) == {n for n, p in CONFIG_PATHS.items() if p.parent == config_path(name).parent}

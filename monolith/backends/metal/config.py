@@ -132,6 +132,13 @@ class ChipConfig:
         return config
 
 
+def _kernel_choices_file(path: Path) -> bool:
+    """A configuration's ``kernel_choices`` sidecar sits beside it: a table of choices, not a configuration."""
+    with Path(path).open() as f:
+        doc = json.load(f)
+    return "choices" in doc and "engine" not in doc
+
+
 def kernel_choices(config: ChipConfig) -> Dict[str, Any]:
     """The measured per-shape kernel choices a configuration ships (``kernel_choices``: a file beside it holding the
     autotuner's cache entries from that chip; the session compiles with them when it does not tune), or none."""
@@ -156,7 +163,7 @@ def load_config(path: str | Path) -> ChipConfig:
 def load_configs(directory: Optional[str | Path] = None) -> Dict[str, ChipConfig]:
     from .registry import CONFIG_PATHS
     paths = sorted(Path(directory).glob("*.json")) if directory is not None else CONFIG_PATHS.values()
-    configs = [load_config(p) for p in paths]
+    configs = [load_config(p) for p in paths if not _kernel_choices_file(p)]
     if len({p.name for p in configs}) != len(configs):
         raise ValueError("duplicate backend configuration name")
     return {p.name: p for p in configs}

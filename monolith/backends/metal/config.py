@@ -146,7 +146,7 @@ def kernel_choices(config: ChipConfig) -> Dict[str, Any]:
     if not name:
         return {}
     from .registry import CONFIG_PATHS
-    path = CONFIG_PATHS.get(config.name)
+    path = getattr(config, "source", None) or CONFIG_PATHS.get(config.name)       # beside the file it was loaded from
     if path is None:
         return {}
     with (path.parent / name).open() as f:
@@ -157,7 +157,9 @@ def load_config(path: str | Path) -> ChipConfig:
     p = Path(path)
     with p.open() as f:
         doc = json.load(f)
-    return ChipConfig.from_dict(doc.get("name", p.stem), doc)
+    config = ChipConfig.from_dict(doc.get("name", p.stem), doc)
+    config.source = p.resolve()                  # not a field: the fingerprint stays the content's; sidecars resolve beside it
+    return config
 
 
 def load_configs(directory: Optional[str | Path] = None) -> Dict[str, ChipConfig]:

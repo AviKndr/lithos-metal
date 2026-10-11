@@ -261,7 +261,7 @@ def test_kernel_choices_look_up_the_tuners_keys_without_timing():
 
 
 @pytest.mark.parametrize('name', ['apple-m3-ultra-60c', 'apple-m4-pro-20c'])
-def test_shipped_kernel_choices_are_valid_geometries(name):
+def test_shipped_kernel_choices_are_valid_geometries(name, tmp_path):
     from monolith.backends.metal.config import kernel_choices, load_configs
     configs = load_configs()
     choices = kernel_choices(configs[name])
@@ -278,5 +278,11 @@ def test_shipped_kernel_choices_are_valid_geometries(name):
             assert c['grid_mode'] in ('crew', 'crew2') or kernels.gemm_ksplit(c['grid_mode']) > 1, key
         assert 0 < c['ms'] <= c['default_ms'], key
     assert kernel_choices(configs['apple-m5-max-40c']) == {}
+    # choices resolve beside the file a configuration was loaded from, under any name
+    import shutil
+    from monolith.backends.metal.config import load_config
+    shutil.copy(config_path(name), tmp_path / 'custom.json')
+    (tmp_path / configs[name].raw['kernel_choices']).write_text(json.dumps({'choices': {'k': choices[next(iter(choices))]}}))
+    assert list(kernel_choices(load_config(tmp_path / 'custom.json'))) == ['k']
     # the sidecar beside a configuration is not one
     assert set(load_configs(config_path(name).parent)) == {n for n, p in CONFIG_PATHS.items() if p.parent == config_path(name).parent}

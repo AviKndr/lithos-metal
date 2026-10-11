@@ -256,3 +256,23 @@ def test_kernel_choices_look_up_the_tuners_keys_without_timing():
     assert choices.tune_gemm(info, 8, None, permute=True) is None
     assert choices.tune_gdn(32, 16, 128, 128, 4, 1) is None
 
+
+
+@pytest.mark.parametrize('name', ['apple-m3-ultra-60c', 'apple-m4-pro-20c'])
+def test_shipped_kernel_choices_are_valid_geometries(name):
+    from monolith.backends.metal.config import kernel_choices, load_configs
+    configs = load_configs()
+    choices = kernel_choices(configs[name])
+    assert choices
+    for key, c in choices.items():
+        kind, fields = key.split('|')[0], key.split('|')
+        assert kind in ('gemv', 'gemm3', 'gdn'), key
+        if kind == 'gemv':
+            rows = int(next(f for f in fields if f.startswith('R'))[1:])
+            rg, split = int(c['macros']['RG']), int(c['macros'].get('RSPLIT', '1').rstrip('u'))
+            assert c['grid_mode'] in ('crew', 'crew2', 'crew3', 'crew4', 'block'), key
+            assert split in kernels.gemv_rsplits(rows, rg, 'silu_mul' if 'silu_mul' in fields else None), key
+        elif kind == 'gemm3':
+            assert c['grid_mode'] in ('crew', 'crew2') or kernels.gemm_ksplit(c['grid_mode']) > 1, key
+        assert 0 < c['ms'] <= c['default_ms'], key
+    assert kernel_choices(configs['apple-m5-max-40c']) == {}

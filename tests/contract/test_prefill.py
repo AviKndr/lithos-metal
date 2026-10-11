@@ -154,7 +154,7 @@ def test_exact_policy_reads_decoder_layouts_and_keeps_bf16_operands(monkeypatch)
     # FP8: one threadgroup per 32-row tile; its four SIMD groups share the decoded tile for four 32-token blocks
     macros = p.kernels[p.ops[0].kernel].macros
     assert (p.ops[0].grid, p.ops[0].threadgroup) == ((320, 4, 1), (128, 1, 1))
-    assert (macros['TN'], macros['STAGE_B'], macros['STAGE_SB'], macros['SHARE_PLANES']) == ('32u', '1', '4u', '0')
+    assert (macros['TN'], macros['STAGE_B'], macros['STAGE_SB']) == ('32u', '1', '4u')
     calls.clear()
     widths = []
     narrow = {'tn': 16}                                     # a verification graph whose file tiles hold 16 rows
@@ -279,7 +279,6 @@ def test_projection_geometry_two_token_blocks_halve_the_token_planes():
     p = program()
     projection_geometry(p, p.ops[0], tm=32, tn=16, sgs=16, groups=160, token_blocks=2)
     assert (p.ops[0].grid, p.kernels[p.ops[0].kernel].macros['TB2']) == ((160, 8, 1), '1')
-    assert p.kernels[p.ops[0].kernel].macros['SHARE_PLANES'] == '1'       # short chunks use the idle planes
     p = program()
     projection_geometry(p, p.ops[0], tm=32, tn=16, sgs=16, groups=160)
     assert p.ops[0].grid == (160, 16, 1) and 'TB2' not in p.kernels[p.ops[0].kernel].macros

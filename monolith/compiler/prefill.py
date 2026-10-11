@@ -48,14 +48,13 @@ def projection_geometry(program, op, *, tm, tn, sgs, groups, token_blocks=1, sta
     key = op.kernel + f'.prefill.{tm}.{tn}.{sgs}.{groups}' + ('.tb2' if token_blocks == 2 else '')
     kernel = copy.deepcopy(old)
     oldtn = int(kernel.macros['TN'].rstrip('u'))
-    # SHARE_PLANES: a chunk shorter than the program's rows spreads its tiles over the idle token planes.
-    kernel.macros.update(TM=str(tm), TN=f'{tn}u', KSPLIT='1u', SCALE_CACHE='0', SHARE_PLANES='1')
+    kernel.macros.update(TM=str(tm), TN=f'{tn}u', KSPLIT='1u', SCALE_CACHE='0')
     if token_blocks == 2:
         kernel.macros['TB2'] = '1'
     if staged:
         if token_blocks != 1:
             raise ValueError('staged weights take one token block per SIMD group')
-        kernel.macros.update(STAGE_B='1', STAGE_SB=f'{sgs}u', SHARE_PLANES='0')
+        kernel.macros.update(STAGE_B='1', STAGE_SB=f'{sgs}u')
     pn, off = next((n, o) for slot, n, o in op.bindings if slot == 4)
     data = bytearray(program.buffers[pn].init)
     n, _, _, rows, _, tile0, _, _ = struct.unpack_from('<IIIIfIII', data, off)

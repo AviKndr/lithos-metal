@@ -33,6 +33,8 @@ ap.add_argument('--max-context', type=int, default=32768)
 ap.add_argument('--budget-s', type=float, default=1000.0,
                 help='do not start another session after this many seconds (finished halves of earlier runs are kept)')
 a = ap.parse_args()
+if a.chunk <= 128:
+    ap.error('--chunk must exceed 128: the reference half runs 128-row chunks, and exact mode needs larger ones')
 OUT = Path(a.out).expanduser()
 
 # prompt-graph tokens (prompt length - 8) per recipe tier: 0, 1, 2 and 127 past a multiple of 128; the first tier
@@ -130,6 +132,23 @@ def sized(p):
     return chat_ids(doc[:p - len(HEAD) - len(TAIL)])
 
 
+if a.cmd == 'plan':
+    for group in a.groups.split(','):
+        if group == 'cache':
+            for name, prefix, source, n, checkpoint in CACHE:
+                ids = chat_ids(doc[:prefix - len(HEAD)] + doc[source:source + n + 8 - len(TAIL)]) if prefix else \
+                    chat_ids(doc[source:source + n + 8 - len(HEAD) - len(TAIL)])
+                print(f'cache/{name}: P={len(ids)} recipe={assets.options(len(ids))[0]} checkpoint={checkpoint} '
+                      f'shared prefix={prefix} head={len(HEAD)} tail={len(TAIL)}')
+        else:
+            for n in LENGTHS[group]:
+                ids = sized(n + 8)
+                print(f'{group}/{n}+8: P={len(ids)} recipe={assets.options(len(ids))[0]} '
+                      f'128-row passes end {[128] * (n // 128) and n % 128 or 128} 512-row passes end {n % a.chunk or a.chunk}')
+    print('document tokens', len(doc))
+    sys.exit(0)
+
+
 OUT.mkdir(parents=True, exist_ok=True)
 
 
@@ -216,6 +235,8 @@ def session_for(prompt_tokens, exact, cache):
     t = time.time()
     session = load_session(str(assets.model_dir), str(assets.pack_dir), **options, eos=-1, temperature=0.0, autotune=False,
                            **shared, **kw)
+    if exact and not session.prefill_exact:
+        raise SystemExit(f'prefill_exact_edges: --chunk {a.chunk} does not run the exact graph')
     shared.update(device=session.dev, pipeline_cache=session._pipelines)
     meta['sessions'].append(dict(recipe=key, exact=exact, cache=cache, load_s=round(time.time() - t, 2)))
     return key, session
@@ -257,22 +278,6 @@ def logits_buffer(dec):
                     return name
     return None
 
-
-if a.cmd == 'plan':
-    for group in a.groups.split(','):
-        if group == 'cache':
-            for name, prefix, source, n, checkpoint in CACHE:
-                ids = chat_ids(doc[:prefix - len(HEAD)] + doc[source:source + n + 8 - len(TAIL)]) if prefix else \
-                    chat_ids(doc[source:source + n + 8 - len(HEAD) - len(TAIL)])
-                print(f'cache/{name}: P={len(ids)} recipe={assets.options(len(ids))[0]} checkpoint={checkpoint} '
-                      f'shared prefix={prefix} head={len(HEAD)} tail={len(TAIL)}')
-        else:
-            for n in LENGTHS[group]:
-                ids = sized(n + 8)
-                print(f'{group}/{n}+8: P={len(ids)} recipe={assets.options(len(ids))[0]} '
-                      f'128-row passes end {[128] * (n // 128) and n % 128 or 128} 512-row passes end {n % a.chunk or a.chunk}')
-    print('document tokens', len(doc))
-    sys.exit(0)
 
 def case_names(group):
     return [f'cache/{c[0]}' for c in CACHE] if group == 'cache' else [f'{group}/{n}+8' for n in LENGTHS[group]]

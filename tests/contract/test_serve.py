@@ -248,13 +248,16 @@ def test_keep_warm_touches_idle_programs_only_within_its_window(monkeypatch):
         lambda: backend._gpu().acquire(),                  # a generation holds the GPU: skip
         lambda: (backend._gpu().release(), clock.update(now=150.0)),   # outside the window: skip
     ])
-    def sleep(seconds):
-        naps.append(seconds)
-        step = next(steps, None)
-        if step is None:
-            raise SystemExit                               # end the daemon loop
-        step()
-    monkeypatch.setattr(serve.time, 'sleep', sleep)
+
+    class Stop:                                            # each wait is one interval of the loop
+        def wait(self, seconds):
+            naps.append(seconds)
+            step = next(steps, None)
+            if step is None:
+                raise SystemExit                           # end the daemon loop
+            step()
+            return False
+    monkeypatch.setattr(serve.threading, 'Event', Stop)
     started = []
     monkeypatch.setattr(serve.threading, 'Thread', lambda target, **kwargs: SimpleNamespace(start=lambda: started.append(target)))
     backend.last_active = 99.0
@@ -263,6 +266,25 @@ def test_keep_warm_touches_idle_programs_only_within_its_window(monkeypatch):
         started[0]()
     assert touches == [True] and naps == [1.0] * 4
     assert backend._gpu().acquire(blocking=False)
+
+
+def test_close_stops_the_keep_warm_worker():
+    import threading
+    import time
+    touches = []
+    backend = Backend.__new__(Backend)
+    backend.session = SimpleNamespace(touch=lambda: touches.append(True))
+    backend.last_active = time.monotonic()
+    before = set(threading.enumerate())
+    backend.keep_warm(60, interval=0.01)
+    worker, = set(threading.enumerate()) - before
+    deadline = time.monotonic() + 5
+    while not touches and time.monotonic() < deadline:
+        time.sleep(0.01)
+    backend.close()
+    count = len(touches)
+    time.sleep(0.05)
+    assert count and len(touches) == count and not worker.is_alive()
 
 
 def test_complete_records_activity_and_serializes_on_the_gpu_lock(monkeypatch):

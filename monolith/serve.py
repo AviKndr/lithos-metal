@@ -159,8 +159,12 @@ class Backend:
             self.prefix_store = None
 
     def close(self):
-        """At exit: stop the idle release's watcher, then write the host checkpoints to the store, where a later
-        server reuses them."""
+        """At exit: stop the keep-warm worker and the idle release's watcher, then write the host checkpoints to the
+        store, where a later server reuses them."""
+        keep_warm = getattr(self, '_keep_warm', None)
+        if keep_warm is not None:
+            keep_warm[0].set()                          # no touch after the join
+            keep_warm[1].join()
         if self.lifecycle is not None:
             self.lifecycle.stop()                       # it unloads nothing after this, and releases the backend
         cache = getattr(self.session, 'prefix_cache', None)
@@ -246,10 +250,11 @@ class Backend:
     def keep_warm(self, seconds, interval=1.0):
         """For ``seconds`` after each generation, touch the loaded programs every ``interval`` (Session.touch): a
         request after a short pause then starts at once instead of ~0.2 s later. A request never waits behind more
-        than one touch (~15 ms of GPU time)."""
+        than one touch (~15 ms of GPU time). close() stops it."""
+        stop = threading.Event()
+
         def loop():
-            while True:
-                time.sleep(interval)
+            while not stop.wait(interval):
                 if self.session is None or time.monotonic() - self.last_active >= seconds:
                     continue
                 lock = self._gpu()
@@ -262,7 +267,8 @@ class Backend:
                     return
                 finally:
                     lock.release()
-        threading.Thread(target=loop, name='keep-warm', daemon=True).start()
+        self._keep_warm = (stop, threading.Thread(target=loop, name='keep-warm', daemon=True))
+        self._keep_warm[1].start()
 
     def _complete(self, request, *, on_text=None, on_content=None, on_start=None, cancelled=None, on_progress=None):
         from jinja2 import TemplateError

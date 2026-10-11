@@ -118,7 +118,7 @@ class Backend:
         if self.session is None:
             self.session = load_session(self.model_dir, self.pack_dir, **options,
                 temperature=request.temperature, top_p=request.top_p, top_k=request.top_k, seed=request.seed,
-                autotune=False, prefill_chunk_size=self.prefill_chunk_size, prefix_cache=True,
+                autotune=False, measured_choices=True, prefill_chunk_size=self.prefill_chunk_size, prefix_cache=True,
                 # exact chunks follow the 128-row chunking, its reusable prefixes included
                 prefix_cache_min_tokens=min(self.prefill_chunk_size, 128) if self.prefill_exact else self.prefill_chunk_size,
                 prefill_exact=self.prefill_exact)

@@ -15,6 +15,12 @@ configuration or autotuning cache.
 | `m5_max_32c` | [32 cores](m5_max_32c/config.json) | Unmeasured native fallback |
 | `m5_max_40c` | [40 cores](m5_max_40c/config.json) | Measured GDN default and explicit attention/MLP/draft recipes preserved |
 
+A configuration can ship measured kernel choices (`kernel_choices`, a file beside it): the autotuner's cache
+entries from that chip for its decode programs, plus the prompt pass's 32-row tile geometry measured in the prompt
+program. `serve` compiles with them (`Session(measured_choices=True)`); shapes they do not list keep the defaults, and
+`python -m monolith.generate --no-autotune` keeps the default geometry everywhere.
+Regenerate them when kernels change: `python -m monolith.generate` tunes and caches per pack.
+
 Unmeasured configurations have no cost tables or automatic megakernel fusion,
 and keep the tensor accelerator off. They provide a starting point for validation
 on those devices, not a performance claim. The 30-core M3 Max, 16-core M4 Pro and

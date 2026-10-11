@@ -52,6 +52,10 @@ class MetalBackend:
         for path in sorted(implementation):
             digest.update(path.relative_to(root).as_posix().encode())
             digest.update(path.read_bytes())
+        from ...formats import FORMATS                       # the format plugins' decode sources are kernel source too
+        for name in sorted(FORMATS.names()):
+            digest.update(name.encode())
+            digest.update(FORMATS.get(name).msl_decode.encode())
         return f"{self.id}-{config.gpu_cores}c-{digest.hexdigest()[:16]}"
 
     def finalize(self, program, graph, emitted, config, **options):

@@ -210,6 +210,9 @@ def test_cache_identity_includes_variant_config_and_selected_source(monkeypatch,
     identity = backend.cache_identity(a)
     (tmp_path / 'advance.metal').write_text('// updated override')
     assert identity != backend.cache_identity(a)
+    from monolith.formats import FORMATS
+    monkeypatch.setattr(FORMATS.get('fp8_e4m3'), 'msl_decode', FORMATS.get('fp8_e4m3').msl_decode + '\n// changed decode')
+    assert identity != backend.cache_identity(a)
 
 
 def test_program_backend_metadata_roundtrips_and_old_programs_load():

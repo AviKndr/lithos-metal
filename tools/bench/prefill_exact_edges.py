@@ -134,6 +134,7 @@ OUT.mkdir(parents=True, exist_ok=True)
 
 
 ARTIFACTS = ('cases.json', 'meta.json')         # what this harness writes into OUT
+OWN = {OUT.resolve() / name for name in ARTIFACTS} | {OUT.resolve() / f'.{name}.tmp' for name in ARTIFACTS}
 
 
 def save(name, text):
@@ -148,8 +149,7 @@ def save(name, text):
 
 def repo_dirty():
     """Uncommitted changes in the checkout, apart from this harness's own files."""
-    own = [(OUT / name).resolve() for name in ARTIFACTS] + [(OUT / f'.{name}.tmp').resolve() for name in ARTIFACTS]
-    spec = ['.'] + [f':(exclude){path.relative_to(ROOT)}' for path in own if path.is_relative_to(ROOT)]
+    spec = ['.'] + [f':(exclude){path.relative_to(ROOT)}' for path in sorted(OWN) if path.is_relative_to(ROOT)]
     # every untracked file listed by name: a new output directory is not one entry that hides the files beside it
     return bool(subprocess.run(['git', '-C', str(ROOT), 'status', '--porcelain', '--untracked-files=all', '--', *spec],
                                capture_output=True, text=True).stdout.strip())
@@ -159,10 +159,9 @@ def code_digest():
     """The engine's files (Python, kernels, recipes, native runtime sources) and this harness, committed or not, and
     the native module this process loaded, wherever it was built."""
     from monolith.runtime import _native
-    digest, out = hashlib.sha256(), OUT.resolve()
-    own = {out / name for name in ARTIFACTS} | {out / f'.{name}.tmp' for name in ARTIFACTS}
+    digest = hashlib.sha256()
     files = [path for part in ('monolith', 'kernels', 'runtime') for path in sorted((ROOT / part).rglob('*'))
-             if path.is_file() and '__pycache__' not in path.parts and path.resolve() not in own]
+             if path.is_file() and '__pycache__' not in path.parts and path.resolve() not in OWN]
     for path in files + [Path(__file__).resolve()]:
         digest.update(str(path.relative_to(ROOT)).encode() + b'\0' + path.read_bytes())
     native = Path(getattr(_native, '__file__', '') or '')
@@ -172,14 +171,14 @@ def code_digest():
 
 def artifact_stamp(*dirs):
     """Every file the model, pack and draft directories hold, by path, size and modification time (a file replaced or
-    repacked in place changes it); directories that are not set count as empty."""
+    repacked in place changes it), apart from this harness's own files; directories that are not set count as empty."""
     digest = hashlib.sha256()
     for root in dirs:
         if root is None or not Path(root).exists():
             digest.update(b'-')
             continue
         for path in sorted(Path(root).rglob('*')):
-            if path.is_file():
+            if path.is_file() and path.resolve() not in OWN:
                 info = path.stat()
                 digest.update(f'{path.relative_to(root)}\0{info.st_size}\0{info.st_mtime_ns}\n'.encode())
     return digest.hexdigest()[:16]

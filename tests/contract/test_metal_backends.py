@@ -238,3 +238,21 @@ def test_report_accepts_unmeasured_bandwidth():
 def test_invalid_template_path_is_rejected(name):
     with pytest.raises((ValueError, FileNotFoundError)):
         kernels.template(name)
+
+
+def test_kernel_choices_look_up_the_tuners_keys_without_timing():
+    import numpy as np
+    from monolith.bench import pack_spec, random_spec
+    from monolith.compiler.autotune import KernelChoices, gemm_key, gemv_key
+    from monolith.formats import PackLayout
+    _, info, _ = pack_spec(random_spec('fp8_e4m3', 64, 1024, np.random.default_rng(0)), PackLayout(rows=16, lane_order='interleaved16'))
+    shader = {'macros': {'RG': '4', 'RSPLIT': '4u'}, 'grid_mode': 'crew4', 'fuse_norm': True, 'ms': 0.1, 'default_ms': 0.2}
+    tile = {'macros': {}, 'grid_mode': 'ksplit4', 'ms': 0.05, 'default_ms': 0.1}
+    choices = KernelChoices({gemv_key(info, 1, None, True, 640): shader, gemm_key(info, 8, None): tile})
+    c = choices.tune_gemv(info, 1, None, True, stat_parts=640)
+    assert (c.macros, c.grid_mode, c.fuse_norm, c.ms) == ({'RG': '4', 'RSPLIT': '4u'}, 'crew4', True, 0.1)
+    assert choices.tune_gemv(info, 2, None, True, stat_parts=640) is None
+    assert choices.tune_gemm(info, 8, None).grid_mode == 'ksplit4'
+    assert choices.tune_gemm(info, 8, None, permute=True) is None
+    assert choices.tune_gdn(32, 16, 128, 128, 4, 1) is None
+

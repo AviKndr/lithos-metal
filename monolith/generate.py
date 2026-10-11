@@ -180,6 +180,11 @@ class Session:
             device_key = f"{info.name.replace(' ', '-').lower()}-{info.gpu_cores}c"
             chip = f"{device_key}-{get_backend(self.profile.backend).cache_identity(self.profile)}"
             self.tuner = Autotuner(self.dev, info.gpu_cores, str(Path(pack_dir) / f"autotune.{chip}.json"))
+        elif self.profile.raw.get("kernel_choices"):
+            from .backends.metal.config import kernel_choices
+            from .compiler.autotune import KernelChoices
+
+            self.tuner = KernelChoices(kernel_choices(self.profile))
 
     def engine(self, t: int):
         """Decode/verification program: static ``t`` or the small dynamic verification bound at ``t=0``."""
@@ -385,6 +390,10 @@ class Session:
             self._setup_ms += (time.perf_counter() - started) * 1000
         return self.engines[key]
 
+    def _tuner(self, prefill):
+        """The live tuner times the decode program's shapes; a configuration's measured choices cover prompt passes too."""
+        return self.tuner if not prefill or getattr(self.tuner, 'measured', False) else None
+
     def _compile(self, bound, *, dynamic, prefill):
         exact = prefill and self.prefill_exact and bound > self.EXACT_ROWS
         shared = exact and self.decoder_kernel_config is not None
@@ -392,7 +401,7 @@ class Session:
             # The exact prompt graph reads the packed layouts the decoder derives.
             self._programs[0] = self._compile(self.decode_t_max, dynamic=True, prefill=False)
         prog = compile_program(self.model, self.pack, self.profile, t=bound, dynamic_t=dynamic, eos=self.eos,
-                               ring_capacity=self.ring_capacity, layout=self.layout, tuner=None if prefill else self.tuner, drafter=self.drafter,
+                               ring_capacity=self.ring_capacity, layout=self.layout, tuner=self._tuner(prefill), drafter=self.drafter,
                                drafter_pack=self.drafter_pack, verify=self.verify, verify_threshold=self.verify_threshold,
                                verify_length=self.verify_length, barriers=self.barriers,
                                attention=self.prefill_attention if prefill and self.prefill_attention is not None else self.attention,

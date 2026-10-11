@@ -132,6 +132,20 @@ class ChipConfig:
         return config
 
 
+def kernel_choices(config: ChipConfig) -> Dict[str, Any]:
+    """The measured per-shape kernel choices a configuration ships (``kernel_choices``: a file beside it holding the
+    autotuner's cache entries from that chip; the session compiles with them when it does not tune), or none."""
+    name = config.raw.get("kernel_choices")
+    if not name:
+        return {}
+    from .registry import CONFIG_PATHS
+    path = CONFIG_PATHS.get(config.name)
+    if path is None:
+        return {}
+    with (path.parent / name).open() as f:
+        return dict(json.load(f)["choices"])
+
+
 def load_config(path: str | Path) -> ChipConfig:
     p = Path(path)
     with p.open() as f:

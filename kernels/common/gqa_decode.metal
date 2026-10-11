@@ -75,9 +75,10 @@ kernel void gqa_decode(device const ushort* qkvg [[buffer(0)]], device ushort* k
 #if STEAL || DRAFT || LM_MODE
 #error "EXACT_SUB: the target's prompt passes only"
 #endif
-  // A prompt pass of T rows reproducing passes of EXACT_SUB rows: the rows of each such sub-pass take the chunking
-  // that sub-pass would (pick_chunk of its own context), so every row sums its keys in that pass's order. The blocks
-  // of the sub-passes follow one another; s0 is a block's first token and sub-pass s0 appends keys from qpos0 + s0.
+  // A prompt pass of T rows reproducing passes of EXACT_SUB rows (it starts on their boundary: the session's exact
+  // chunks are multiples of EXACT_SUB): the rows of each such sub-pass take the chunking that sub-pass would
+  // (pick_chunk of its own context), so every row sums its keys in that pass's order. The blocks of the sub-passes
+  // follow one another; s0 is a block's first token and sub-pass s0 appends keys from qpos0 + s0.
   uint n_exact = 0u;
   for (uint s0 = 0u; s0 < T; s0 += EXACT_SUB) n_exact += exact_sub_blocks(qpos0, s0, T, rep, p.kv_heads, p.n_sg, p.n_chunks_max);
   for (uint bx = sg; bx < n_exact; bx += p.n_sg) {

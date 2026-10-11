@@ -585,6 +585,8 @@ def _prefill_chunk(value):
     rows = None if (rows, exact) == ('auto', True) else int(rows)
     if rows is not None and rows < 1:
         raise argparse.ArgumentTypeError('must be positive')
+    if exact and rows is not None and rows > 128 and rows % 128:
+        raise argparse.ArgumentTypeError('an exact chunk above 128 rows is a multiple of 128')
     return rows, exact
 
 

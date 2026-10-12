@@ -6,6 +6,8 @@
    them; identifiers may not).
 3. No model name (a token list below) appears in ``monolith/`` outside ``monolith/models/`` — in identifiers *or*
    string literals, so weight-name maps cannot leak into the engine either.
+4. No workflow under ``.github/workflows`` names a Hugging Face token: CI reads public checkpoints only, and a token on
+   a self-hosted runner would be readable by the code under test.
 """
 
 from __future__ import annotations
@@ -23,6 +25,7 @@ IMPORT_RE = re.compile(r"^\s*(import\s+mirage\b|from\s+mirage\b)", re.MULTILINE)
 FORBIDDEN_IDENT = re.compile(r"(mpk|mirage)", re.IGNORECASE)
 MODEL_TOKENS = ("qwen", "llama", "deepseek", "gemma", "kimi", "mistral", "gpt", "phi", "yi_", "glm", "minimax")
 NOT_MODELS = ("ollama",)              # serving APIs whose names contain a model token
+HF_TOKEN_RE = re.compile(r"HF_TOKEN|HUGGING_FACE_HUB_TOKEN|secrets\.HF_")
 SKIP_DIRS = {".git", ".venv", "build", "node_modules", "__pycache__", ".pytest_cache", "third_party"}
 
 
@@ -84,8 +87,17 @@ def check_model_names(root: Path) -> List[str]:
     return out
 
 
-def run(root: Path) -> Tuple[List[str], List[str], List[str]]:
-    return check_no_mirage_import(root), check_identifiers(root), check_model_names(root)
+def check_workflow_tokens(root: Path) -> List[str]:
+    out = []
+    for p in sorted((root / ".github" / "workflows").glob("*.y*ml")):
+        for n, line in enumerate(p.read_text().splitlines(), 1):
+            if HF_TOKEN_RE.search(line):
+                out.append(f"{p.relative_to(root)}:{n}: names a Hugging Face token")
+    return out
+
+
+def run(root: Path) -> Tuple[List[str], List[str], List[str], List[str]]:
+    return check_no_mirage_import(root), check_identifiers(root), check_model_names(root), check_workflow_tokens(root)
 
 
 def main(argv: List[str] | None = None) -> int:
@@ -96,7 +108,8 @@ def main(argv: List[str] | None = None) -> int:
         for line in problems:
             print("  " + line)
         return 1
-    print("hygiene: ok (no mirage imports, no MPK/mirage identifiers, no model names outside monolith/models/)")
+    print("hygiene: ok (no mirage imports, no MPK/mirage identifiers, no model names outside monolith/models/, "
+          "no Hugging Face token in a workflow)")
     return 0
 
 

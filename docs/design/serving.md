@@ -39,7 +39,8 @@ session's GPU weight buffers remain resident, while the CPU program and pipeline
 replacement and idle release.
 
 `GET /health` reports process liveness after startup. `GET /v1/models` returns the served alias.
-One generation executes at a time; overlapping requests receive HTTP 429.
+One generation executes at a time; overlapping requests receive HTTP 429, except Ollama chat requests, which
+wait for the running one as Ollama queues them.
 
 ## Request execution
 
@@ -97,7 +98,7 @@ pending; any request that arrives restarts it. A request counts as pending from 
 for the GPU, through prefill, decode and streaming, until it completes, fails or is cancelled.
 
 The model is `ready`, `unloading`, `unloaded`, `loading` or `failed` (`GET /health` reports it as `model` when
-the option is set). Loads and unloads run under the lock that every GPU submission holds, so an unload never
+the option is set or an Ollama request started the lifecycle). Loads and unloads run under the lock that every GPU submission holds, so an unload never
 overlaps a generation or its command buffers. The unload releases every session's allocations: target and draft
 weight mappings, KV caches, GDN convolution and recurrent states, StepState, scratch, indirect command buffers,
 runners and their residency, and the in-memory prefix checkpoints. The tokenizer, the HTTP server, compiled CPU
@@ -106,11 +107,21 @@ compiling; the pack files' pages can still be in the OS file cache, which makes 
 memory pressure evicted them. No weights or states are copied to the CPU or written anywhere.
 
 The next request selects its session and loads it before prefill. The load is part of that request, so an
-overlapping HTTP request receives 429 as it does during a generation; in-process callers that wait for the GPU
-(`Backend.complete`) share one load and its result. A request that arrives during an unload waits for it and
-loads the model again. A failed load leaves the model `failed` and reports HTTP 503 `model_load_failed` (an error
-event on a stream), and the next request tries again. Without the disk tier the prompt is prefilled again after a
-load; with it, checkpoints are written before the release and restored from disk.
+overlapping HTTP request is answered as during a generation (429, or a wait for an Ollama chat request);
+in-process callers that wait for the GPU (`Backend.complete`) share one load and its result. A request that arrives
+during an unload waits for it and loads the model again. A failed load leaves the model `failed` and reports HTTP 503
+`model_load_failed` (an error event on a stream), and the next request tries again. Without the disk tier the prompt
+is prefilled again after a load; with it, checkpoints are written before the release and restored from disk.
+
+An Ollama request's `keep_alive` (seconds or a duration such as `5m`; `0` releases the model once no request is pending,
+a negative value never) sets the period that follows that request, as in Ollama; requests without one restore the
+server's period. Without `--model-ttl`, the first Ollama request with a finite `keep_alive`, or a load or unload
+request, starts the lifecycle with a period of never. An Ollama chat request without messages loads the model, or
+releases it with `keep_alive: 0`, in turn after the Ollama requests queued before it (they are admitted in arrival
+order), and `GET /api/ps` lists the model while it is loaded with the time of its release. Clients that probe with `HEAD
+/api/chat` before a request start a reload early: once the GPU is free, an unloaded model loads in the background and,
+if no request follows, is released after the longer of the current period and one minute. A probe of a server started
+with `--no-warmup` and no `--model-ttl` starts the lifecycle as a load request does, so it loads the model for good.
 
 ## Prefix caching and memory ownership
 
@@ -166,11 +177,14 @@ hit does not guarantee that all preparation or layout-transition work disappears
 | Chat Completions | Text, function tools and results, sampling, stop strings, and SSE |
 | Responses | Stateless request/response adaptation; supported client-executed custom tools |
 | Anthropic Messages | Text and tool-use adaptation, streaming, and token counting |
+| Ollama chat | `/api/chat` text and tools, NDJSON streaming, `keep_alive`; `/api/tags` and `/api/ps` |
 
 Each request supplies the conversation context. Responses does not implement `previous_response_id` or
-background jobs. The adapters do not implement image/audio/document inputs, hosted tools, extended thinking,
-strict JSON-schema decoding, or grammar enforcement for custom tools. Unsupported fields receive
-capability-specific errors.
+background jobs. Ollama requests get this server's defaults (greedy sampling, output until a stop or the context
+capacity; `num_predict` only lowers that bound), not a Modelfile's; its runtime options such as `num_ctx` do not
+apply, and sampling options without an implementation here are accepted only at their neutral values. The
+adapters do not implement image/audio/document inputs, hosted tools, extended thinking, strict JSON-schema
+decoding, or grammar enforcement for custom tools. Unsupported fields receive capability-specific errors.
 
 Tool execution belongs to the client, which retains its own permission model. The server validates generated
 tool names and argument structure before treating them as a completed tool call.

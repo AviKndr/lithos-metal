@@ -4,6 +4,7 @@ from __future__ import annotations
 import contextlib
 import enum
 import logging
+import math
 import threading
 import time
 
@@ -22,6 +23,29 @@ class ModelLoadError(RuntimeError):
     """Loading the model failed. The model stays unloaded and a later request tries again."""
 
 
+class FifoLock:
+    """A lock that admits blocking waiters in the order they asked (Ollama answers the requests it queues in order). A
+    non-blocking acquire succeeds only when nobody holds the lock or waits for it."""
+
+    def __init__(self):
+        self._condition = threading.Condition()
+        self._next = self._serving = 0        # tickets handed out; the ticket that holds the lock
+
+    def acquire(self, blocking=True):
+        with self._condition:
+            if not blocking and self._next != self._serving:
+                return False
+            ticket, self._next = self._next, self._next + 1
+            while ticket != self._serving:
+                self._condition.wait()
+            return True
+
+    def release(self):
+        with self._condition:
+            self._serving += 1
+            self._condition.notify_all()
+
+
 class IdleRelease:
     """The model's lifecycle: ``unloaded -> loading -> ready -> unloading -> unloaded``, ``loading -> failed``.
 
@@ -30,19 +54,26 @@ class IdleRelease:
     pending from its arrival, before it waits for that lock: the idle period starts when the last request finishes
     with none pending, and a request that arrives during an unload waits for it and then loads the model again.
 
-    ``seconds`` is the idle period on the monotonic clock; ``unload`` is called with the lock held.
+    ``seconds`` is the default idle period on the monotonic clock (``math.inf``: never). A finished request can set
+    the period that follows it instead, as Ollama's ``keep_alive`` does. ``unload`` is called with the lock held.
     """
 
-    def __init__(self, gpu_lock, unload, seconds, *, state=ModelState.READY, clock=time.monotonic):
+    PROBE_HOLD = 60.0          # seconds a model loaded for a probe waits for the request it announces, at least
+
+    def __init__(self, gpu_lock, unload, seconds, *, state=ModelState.READY, clock=time.monotonic, loaded=None):
         if isinstance(seconds, bool) or not isinstance(seconds, (int, float)) or not seconds > 0:
             raise ValueError('the idle period must be a positive number of seconds')
-        self.gpu_lock, self._unload, self.seconds, self.clock = gpu_lock, unload, float(seconds), clock
+        self.gpu_lock, self._unload, self.clock = gpu_lock, unload, clock
+        self._loaded = loaded                 # the backend's own answer, for a state set while a request loaded
+        self.default = self.seconds = float(seconds)     # the server's period; the one running now
         self.state = ModelState(state)
         self.error = None                     # the last failed load's exception
         self.attempts = 0                     # loads finished, failed or not; a request remembers the count it arrived at
         self.pending = 0                      # requests between arrival and completion
         self.loads = self.unloads = 0
         self.last_active = clock()
+        self.epoch = 0                        # finished requests and explicit releases: older probes stand down
+        self._probe_epoch, self._probing, self._probers = 0, False, []
         self._condition = threading.Condition()
         self._stopped = False
         self._thread = None
@@ -57,24 +88,48 @@ class IdleRelease:
         with self._condition:
             self._stopped = True
             self._condition.notify_all()
-        thread = getattr(self, '_thread', None)
-        if thread is not None and thread is not threading.current_thread():
-            thread.join()
+        with self._condition:
+            threads = [getattr(self, '_thread', None)] + list(self._probers)
+        for thread in threads:
+            if thread is not None and thread is not threading.current_thread():
+                thread.join()
 
     @contextlib.contextmanager
-    def request(self):
+    def request(self, seconds=None):
         """Count a request from its arrival (before it waits for the GPU lock) to its completion, failure or
         cancellation. Yields the count of finished loads it arrived at, for ``ensure_loaded``."""
-        with self._condition:
-            self.pending += 1
-            arrived = self.attempts
+        arrived = self.arrive()
         try:
             yield arrived
         finally:
-            with self._condition:
-                self.pending -= 1
-                self.last_active = self.clock()
-                self._condition.notify_all()
+            self.leave(seconds)
+
+    def arrive(self):
+        with self._condition:
+            self.pending += 1
+            return self.attempts
+
+    def leave(self, seconds=None):
+        """The request finished: the idle period restarts with ``seconds`` (its own; 0 releases the model once no
+        request is pending, ``math.inf`` keeps it), else with the default."""
+        with self._condition:
+            self.pending -= 1
+            self.last_active = self.clock()
+            self.seconds = self.default if seconds is None else float(seconds)
+            self.epoch += 1
+            self._condition.notify_all()
+
+    def expires_in(self):
+        """Seconds until an idle release of the ready model, None for never."""
+        with self._condition:
+            if self.state is not ModelState.READY or math.isinf(self.seconds):
+                return None
+            return max(0.0, self.last_active + self.seconds - self.clock())
+
+    def hold(self, load, seconds=None):
+        """Load the model unless it is ready, without generating, and restart the period (Ollama's load request)."""
+        with self.request(seconds) as arrived, self.gpu_lock:
+            self.ensure_loaded(arrived, load)
 
     def ensure_loaded(self, arrived, load):
         """With the GPU lock held: run ``load`` unless the model is ready. Requests that waited for a load share its
@@ -120,18 +175,78 @@ class IdleRelease:
                     return False
                 self.state = ModelState.UNLOADING
             LOG.info('Model state: ready -> unloading after %.0f s idle', self.clock() - self.last_active)
-            started = self.clock()
-            try:
-                self._unload()
-            except Exception:
-                # Whatever remains allocated is mapped again or reused by the next load.
-                LOG.exception('Releasing the idle model failed')
-            self.unloads += 1
-            self._set(ModelState.UNLOADED)
-            LOG.info('Released the idle model in %.2f s', self.clock() - started)
+            self._release()
         finally:
             self.gpu_lock.release()
         return True
+
+    def release_now(self):
+        """Release the model once the GPU is free, whatever the period (Ollama's keep_alive 0 without messages); the
+        next request loads it again. Probes accepted before stand down; one accepted meanwhile loads it after."""
+        with self.gpu_lock:
+            with self._condition:
+                self.epoch += 1
+                self.seconds = 0.0                # a later probe holds the model for PROBE_HOLD only
+                if self.state is ModelState.UNLOADED and self._loaded is not None and self._loaded():
+                    self.state = ModelState.READY     # a request that began before this lifecycle loaded the model
+                if self.state is not ModelState.READY:
+                    return False
+                self.state = ModelState.UNLOADING
+            LOG.info('Model state: ready -> unloading on request')
+            self._release()
+        return True
+
+    def probe(self, load):
+        """A client announced a request (Ollama clients send HEAD /api/chat first). Once the GPU is free, an unloaded
+        model loads, or a ready one whose period ran out keeps loaded, for the longer of the current period and
+        PROBE_HOLD: a probe that no request follows still ends in a release. A request or an explicit release that
+        finishes first makes the probe stand down. One worker serves any number of probes."""
+        with self._condition:
+            self._probe_epoch = self.epoch
+            if self._probing or self._stopped:
+                return
+            self._probing = True
+            worker = threading.Thread(target=self._probe, args=(load,), name='idle-release-probe', daemon=True)
+            self._probers = [t for t in self._probers if t.is_alive()] + [worker]
+            worker.start()
+
+    def _probe(self, load):
+        while not self.gpu_lock.acquire(timeout=0.1):         # stop() ends the wait, as for the watcher
+            if self._stopped:
+                with self._condition:
+                    self._probing = False
+                return
+        try:
+            with self._condition:
+                self._probing = False             # later probes start another worker, which waits for this one
+                if self._stopped or self._probe_epoch != self.epoch:
+                    return
+                ready = self.state is ModelState.READY
+                if ready and self.clock() - self.last_active < self.seconds:
+                    return                        # its period is still running
+            if not ready:
+                try:
+                    self.ensure_loaded(self.attempts, load)
+                except ModelLoadError:
+                    return                        # FAILED; the next request tries again
+            with self._condition:
+                self.seconds = max(self.seconds, self.PROBE_HOLD)
+                self.last_active = self.clock()
+                self.epoch += 1
+                self._condition.notify_all()
+        finally:
+            self.gpu_lock.release()
+
+    def _release(self):
+        started = self.clock()
+        try:
+            self._unload()
+        except Exception:
+            # Whatever remains allocated is mapped again or reused by the next load.
+            LOG.exception('Releasing the model failed')
+        self.unloads += 1
+        self._set(ModelState.UNLOADED)
+        LOG.info('Released the model in %.2f s', self.clock() - started)
 
     def _set(self, state):
         with self._condition:

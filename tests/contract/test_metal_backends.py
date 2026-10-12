@@ -10,7 +10,7 @@ import pytest
 from monolith import kernels
 from monolith.backends.metal import (ChipConfig, config_for_device, config_path,
     current_backend, get_backend, load_configs, using_backend)
-from monolith.backends.metal.registry import CONFIG_PATHS
+from monolith.backends.metal.registry import BACKENDS, CONFIG_PATHS
 from monolith.compiler import compile_program, emit_program
 from monolith.core import BlockDomain, DType, Graph, OpClass, T
 from monolith.runtime.program import KernelSpec, OpSpec, Program
@@ -70,6 +70,12 @@ def test_m3_ultra_60c_is_its_own_device():
     assert get_backend('m3_ultra_60c').serving_context_limit(drafter=True) is None
     assert get_backend('m3_ultra_60c').serving_prefill_chunk({}) == 512
     assert get_backend('m4_pro').serving_prefill_chunk({}) is None
+
+
+@pytest.mark.parametrize('backend', sorted(BACKENDS))
+def test_every_backend_takes_the_served_model_in_its_prefill_hook(backend):
+    # serving.setup passes the served model: an override without the argument would fail at startup
+    get_backend(backend).serving_prefill_chunk({}, None)
 
 
 def test_unmeasured_backends_have_no_borrowed_tuning():

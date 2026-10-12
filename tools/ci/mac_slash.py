@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Pull request comments that start a self-hosted Mac lane (.github/workflows/mac-slash.yml, docs/ci.md).
 
-    /mac-test [--shader-validation] [RUNNER ...] [COMMIT]   the test tiers on bare-metal Macs (mac-gpu.yml)
+    /mac-test [--shader-validation] [RUNNER ...] [COMMIT]          the test tiers on bare-metal Macs (mac-gpu.yml)
+    /release-gate [--expect-output-change] [RUNNER ...] [COMMIT]   against the last release (release-gate.yml)
 
 RUNNER is a label from the repository variable ``MAC_CI_RUNNERS`` (a JSON list, e.g. ``["m5_max_40c"]``); without one
 the lane runs on every listed runner. The workflow that calls this runs from the default branch, never from the pull
@@ -30,6 +31,8 @@ from github_api import GitHub  # noqa: E402
 COMMANDS = {
     "/mac-test": {"workflow": "mac-gpu.yml", "context": "mac-gpu",
                   "flags": {"--shader-validation": "shader_validation"}},
+    "/release-gate": {"workflow": "release-gate.yml", "context": "release-gate",
+                      "flags": {"--expect-output-change": "expect_output_change"}},
 }
 WRITE_ROLES = ("admin", "maintain", "write")
 

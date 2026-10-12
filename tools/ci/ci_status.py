@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Set a self-hosted lane's commit statuses from its runners' results (the report job of mac-gpu.yml).
+"""Set a self-hosted lane's commit statuses from its runners' results (the report jobs of mac-gpu.yml and
+release-gate.yml).
 
     python3 tools/ci/ci_status.py --context mac-gpu --sha SHA --runners '["m5_max_40c"]' --results DIR \
         --artifact-prefix mac-gpu- --run-url URL
@@ -22,7 +23,7 @@ from typing import List, Optional, Tuple
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from github_api import GitHub  # noqa: E402
 
-STATES = {"passed": "success", "failed": "failure"}   # anything else (could not run): error
+STATES = {"passed": "success", "failed": "failure"}   # anything else (could not run, inconclusive): error
 
 
 def status_for(result: Optional[dict]) -> Tuple[str, str]:
@@ -32,6 +33,8 @@ def status_for(result: Optional[dict]) -> Tuple[str, str]:
     state = STATES.get(result.get("status"), "error")
     if result.get("error"):
         text = f"could not run: {result['error']}"
+    elif result.get("summary"):
+        text = result["summary"]
     else:
         problems = [f"{t['tier']}: {p}" for t in result.get("tiers", []) for p in t.get("problems", [])]
         if problems:

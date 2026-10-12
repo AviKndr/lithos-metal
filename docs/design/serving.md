@@ -32,9 +32,11 @@ The server selects chip-owned recipes from the request's prompt length. An expli
 override that selection. Target and draft precision, proposal count, sampling configuration, and context
 capacity participate in program selection; changing them can require another compiled session.
 
-Startup warmup compiles the default sampling configuration and exercises allocation/reuse before requests
-are accepted. Deferring warmup moves that cost to requests. Only one session's GPU weight buffers remain
-resident, while bounded CPU program and pipeline caches can survive session replacement.
+Startup warmup compiles every recipe's greedy and sampling programs (one sampling program serves every
+temperature, top-k, top-p and seed) and exercises allocation/reuse before requests are accepted, so no request
+compiles; the CPU program cache keeps all of them. Deferring warmup moves that cost to requests. Only one
+session's GPU weight buffers remain resident, while the CPU program and pipeline caches survive session
+replacement and idle release.
 
 `GET /health` reports process liveness after startup. `GET /v1/models` returns the served alias.
 One generation executes at a time; overlapping requests receive HTTP 429.
